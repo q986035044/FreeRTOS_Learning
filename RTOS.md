@@ -348,4 +348,4 @@ C[任务3] --tick中断--> A[任务1]
 + blocked：阻塞，等待某件事到来才能运行，比如中断，其他任务执行结束
 + suspended：暂停，主动或被动
 
-![任务状态图](D:\794QYH\EE\RTOS\imag\task_status.png)
+![任务状态图](imag/task_status.png)

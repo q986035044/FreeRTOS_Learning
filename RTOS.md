@@ -8,6 +8,8 @@
 
 栈由系统自动分配和释放内存，存放函数的返回地址，局部变量等
 
+---
+
 ### 二.从目录文件了解源码结构
 
 从[FreeRTOS](https://www.freertos.org/)官网下载的文件解压缩之后，得到三个目录文件
@@ -34,9 +36,13 @@ RTOS的核心，打开之后得到以下文件夹
 
 暂时不懂，以后补充
 
+---
+
 整体目录结构图：
 
 ![目录结构](imag/file_structure.png)
+
+---
 
 ### 三.创建任务
 
@@ -91,7 +97,7 @@ TaskHandle_t xTaskHandle1;
 xTaskCreate(TaskFun1,"Task1",100,NULL,1,&xTaskHandle1);//传入任务句柄
 ```
 
-
+---
 
 ##### 静态创建
 
@@ -206,8 +212,8 @@ void vApplicationGetIdleTaskMemory( StaticTask_t ** ppxIdleTaskTCBBuffer,
                                         uint32_t * pulIdleTaskStackSize )
 {
 	*ppxIdleTaskTCBBuffer = IdleTaskTCB;
-	* ppxIdleTaskStackBuffer = &IdleTaskStack;
-	* pulIdleTaskStackSize = 100;
+	*ppxIdleTaskStackBuffer = &IdleTaskStack;
+	*pulIdleTaskStackSize = 100;
 	 
 }
 
@@ -216,3 +222,130 @@ void vApplicationGetIdleTaskMemory( StaticTask_t ** ppxIdleTaskTCBBuffer,
 关于这一步，从函数名字知道这个是要获取空闲内存空间的，具体实现尚不清楚，还需进一步探索。
 
 当这个函数实现之后即可完成静态创建任务的实现。
+
+---
+
+##### 关于任务的实验
+
+###### 任务优先级
+
+当创建以下任务时
+
+```C
+void TaskFun1(void* arg)
+{
+	while(1)
+	{
+		printf("1");
+	}
+}
+
+void TaskFun2(void* arg)
+{
+	while(1)
+	{
+		printf("2");
+	}
+}
+xTaskCreate(TaskFun1,"Task1",100,NULL,2,NULL);	xTaskCreate(TaskFun2,"Task2",100,NULL,1,&xTaskHandle2);
+```
+
+任务1的优先级为2，数值越大优先级越高。实验现象是，任务1一直在执行，如果任务1没有结束执行，则任务2就永远无法得到执行。
+
+高优先级的任务先执行，同等优先级的任务交替执行。
+
+---
+
+###### 删除任务
+
+函数
+
+```C
+void vTaskDelete( TaskHandle_t xTaskToDelete );
+/*
+最好在任务函数里调用，经测试，在main函数调用，无论是否传入句柄，无论是哪个句柄，都会删除第一个任务
+参数为任务句柄，如果传入NULL，则自删
+*/
+```
+
+```C
+/*
+	这里是在任务优先级的代码基础上进行修改，这个实验的任务优先级相等
+	这个实验是在任务1执行一定时间后删除任务2
+	任务2句柄为全局变量
+*/
+TaskHandle_t xTaskHandle2;
+void TaskFun1(void* arg)
+{
+	u8 i=0;
+	u8 flag_del=0;
+	while(1)
+	{
+		i++;
+		if( i>100 && flag_del==0 )
+		{
+			vTaskDelete(xTaskHandle2);
+			flag_del=1;
+			i=0;
+		}
+		printf("1");	
+	}
+}
+```
+
+---
+
+###### 多个任务使用同一个函数
+
+```C
+void TaskCommonFun(void* arg)
+{
+	int num=(int)arg;
+	while(1)
+	{
+		printf("%d",num);
+	}	
+}
+
+//以下是在main函数里
+xTaskCreate(TaskCommonFun,"Task1",100,(void*)6,1,NULL);
+xTaskCreate(TaskCommonFun,"Task2",100,(void*)9,1,NULL);
+```
+
+---
+
+### 任务管理
+
+#### 1.任务状态
+
+都说同优先级的任务交替执行，这个交替切换的基础是什么？
+
+**tick中断**
+
+一个任务运行的时间就是一个tick产生中断的时间
+
+这个tick的时间可以修改,在FreeRTOSConfig.h里
+
+```C
+#define configTICK_RATE_HZ			( ( TickType_t ) 1000 )
+```
+
+假设有三个任务，交替切换原理大概如下
+
+```mermaid
+graph LR
+A[任务1] --tick中断--> B[任务2]
+B[任务2] --tick中断--> C[任务3]
+C[任务3] --tick中断--> A[任务1]
+```
+
+当任务1运行时处于running状态，在下个tick中断到来之前，其他任务处于ready状态，由此得知，每个任务都一个状态
+
+**任务状态**
+
++ running：运行
++ ready：等待运行
++ blocked：阻塞，等待某件事到来才能运行，比如中断，其他任务执行结束
++ suspended：暂停，主动或被动
+
+![任务状态图](D:\794QYH\EE\RTOS\imag\task_status.png)

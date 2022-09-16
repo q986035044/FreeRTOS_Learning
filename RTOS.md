@@ -314,9 +314,11 @@ xTaskCreate(TaskCommonFun,"Task2",100,(void*)9,1,NULL);
 
 ---
 
-### 任务管理
+### 四.任务管理
 
 #### 1.任务状态
+
+##### 原理
 
 都说同优先级的任务交替执行，这个交替切换的基础是什么？
 
@@ -349,3 +351,107 @@ C[任务3] --tick中断--> A[任务1]
 + suspended：暂停，主动或被动
 
 ![任务状态图](imag/task_status.png)
+
+---
+
+##### 实验
+
+1. 预备
+
+​	创建三个变量，通过keil逻辑分析仪来观察RTOS的任务状态
+
+​	优先级相同的任务交替执行，观察结果如下
+
+![“实时”的实现](imag/task_flag.png)
+
+---
+
+​	2. 体现四种任务状态的实验
+
+​	概述
+
+​	让任务1运行到10个tick时，让任务2暂停(suspended)，任务1运行到20个tick后恢复任务2(resume)；任务3每次阻塞10个tick(delay);
+
+​	<span id="task_status_fun">三个任务函数如下：</span>
+
+```C
+//函数作用请看概述
+void TaskFun1(void* arg)
+{
+	TickType_t t_start = xTaskGetTickCount();
+	TickType_t t = 0;
+	u32 temp=0;
+	u8 t_flag=0;
+	while(1)
+	{
+		t = xTaskGetTickCount();
+		temp = t - t_start;
+		printf("%ld",temp);
+		Flag_Task1=1;
+		Flag_Task2=0;
+		Flag_Task3=0;
+		if(t > t_start + 10 && t_flag!=1)
+		{
+			vTaskSuspend(xTaskHandle2);
+			t_flag = 1;
+		}
+		if(t > t_start + 20)
+		{
+			vTaskResume(xTaskHandle2);
+		}
+	}
+}
+
+void TaskFun2(void* arg)
+{
+	while(1)
+	{
+//		printf("2");
+		Flag_Task1=0;
+		Flag_Task2=1;
+		Flag_Task3=0;
+	}
+}
+
+void TaskFun3(void* arg)
+{
+	while(1)
+	{
+//		printf("3");
+		Flag_Task1=0;
+		Flag_Task2=0;
+		Flag_Task3=1;
+		vTaskDelay(10);
+	}
+}
+```
+
+	3. 实验现象
+
+先看任务3
+
+![任务3现象](imag/flag_task3.png)
+
+虚线间隔为1tick，在程序里设置为1ms，在这里看起来像是11个tick，个人理解是任务3是delay10个tick，应该是delay完整的tick，在标号1tick之前，任务在执行，可能不算完整的tick
+
+任务3体现了任务阻塞状态blocked
+
+---
+
+再看任务1形成的现象
+
+![任务1现象10tick](imag/flag_task1_before.png)
+
+这里还用到串口打印[任务1函数](#task_status_fun)里的temp = t - t_start，来获取当前tick与任务1刚执行时的时间差，这里展示的是理论上的前10个tick
+
+**可以看到，一开始时间差为0，所以索引应该从0开始，直到序号12tick，任务2才被暂停(suspended)，这是因为同优先级的任务交替执行，任务3blocked，所以任务1和任务2在交替执行，因此任务1里的t之间相差2，又因为是相差2，所以才会在序号12tick时任务suspended，理应是在序号11tick**
+
+再看任务2suspended状态下的现象
+
+![任务1现象20tick](imag/flag_task1_after.png)
+
+根据前面的分析，导致了任务2suspended持续时间不足10tick的现象
+
+**这里任务1突然出现下降沿又上升是因为任务3的blocked结束，进入running，之后又blocked，任务函数实现的就是用变量展示哪个任务在running，其他的任务就ready。按前面的分析，理论来说，这里应该时间差到22，任务2才会resume，这个任务3的小插曲刚好让时间差为21，让任务2resume。虽然任务2resume，但仍有一小段为低电平，是因为让任务2resume之后，这个tick是任务1在running。**
+
+这个实验很好的体现了任务的四种状态

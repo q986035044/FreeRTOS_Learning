@@ -455,3 +455,150 @@ void TaskFun3(void* arg)
 **这里任务1突然出现下降沿又上升是因为任务3的blocked结束，进入running，之后又blocked，任务函数实现的就是用变量展示哪个任务在running，其他的任务就ready。按前面的分析，理论来说，这里应该时间差到22，任务2才会resume，这个任务3的小插曲刚好让时间差为21，让任务2resume。虽然任务2resume，但仍有一小段为低电平，是因为让任务2resume之后，这个tick是任务1在running。**
 
 这个实验很好的体现了任务的四种状态
+
+#### 2.vTaskDelay和vTaskDelayUntil
+
++ vTaskDelay
+
+![vTaskDelay](imag/vTaskDelay.png)
+
+---
+
++ vTaskDelayUntil
+
+![vTaskDelayUntil](imag/vTaskDelayUntil.png)
+
+一开始传入t1，延迟固定时间然后运行到t3时会将t3替代t1，再次延迟固定时间后传入t5替代t3，依次类推。
+
+**vTaskDelay和vTaskDelayUnitl的区别在于后者B包含A**
+
+#### 3.空闲任务及其钩子函数
+
+这里的内容是将空闲任务的作用，还有如何调用空闲任务
+
+##### 空闲任务
+
+程序里有个空闲任务，是用来清理一些被删除的任务的空间，空闲任务的创建一般在
+
+```C
+vTaskStartScheduler()
+    
+//具体函数如下
+xReturn = xTaskCreate( prvIdleTask,
+                                   configIDLE_TASK_NAME,
+                                   configMINIMAL_STACK_SIZE,
+                                   ( void * ) NULL,
+                                   portPRIVILEGE_BIT, 
+                                   &xIdleTaskHandle );
+/*
+	portPRIVILEGE_BIT是任务优先级，查找定义可以找到优先级定义如下
+	#define portPRIVILEGE_BIT    ( ( UBaseType_t ) 0x00 )
+	空闲任务的优先级为0
+*/
+```
+
+在删除任务时，假设在任务1里删除任务2，删除任务2之后任务1会完成一些任务2的空间释放工作，不一定只有空闲任务才能清理
+
+实证如下：
+
+```C
+/*
+	任务1创建任务2，让任务2优先级为2，然后让任务2阻塞一会儿，这样任务1才能得到执行
+	结果现象就是串口从未出现“create task2 err”这句话，当出现这句话说明空间分配不足
+	在不断地创建任务2删除任务2，如果没有清理任务2空间，必定会出现“create task2 err”这句话，这里并没有出现，说明任务1在删除任务2之后会清理任务2的空间
+*/
+TaskHandle_t xTaskHandle2;
+void TaskFun2(void* arg);
+/*-----------------------------------------------------------*/
+void TaskFun1(void* arg)
+{
+	BaseType_t xReturn;
+	while(1)
+	{
+		printf("1");
+		xReturn = xTaskCreate(TaskFun2,"Task2",100,NULL,2,&xTaskHandle2);
+		if(xReturn != pdPASS)
+		{
+			printf("create task2 err\r\n");
+		}
+		vTaskDelete(xTaskHandle2);
+	}
+}
+
+void TaskFun2(void* arg)
+{
+	while(1)
+	{
+		printf("2");
+		vTaskDelay(2);
+	}
+}
+```
+
+如果将以上第20行放在任务2printf函数后面，修改如下：
+
+```C
+void TaskFun2(void* arg)
+{
+	while(1)
+	{
+		printf("2");
+		vTaskDelay(2);
+		vTaskDelete(NULL);
+	}
+}
+```
+
+这是在任务2自己删除自己，在程序正常运行一段时间之后就会出现“create task err”，在任务删除自己时，需要空闲函数来清理空间，下面是vTaskCreate里提到自己删除自己的注意事项
+
+```C
+ /* A task is deleting itself.  This cannot complete within the
+  * task itself, as a context switch to another task is required.
+  * Place the task in the termination list.  The idle task will
+  * check the termination list and free up any memory allocated by
+  * the scheduler for the TCB and stack of the deleted task. */
+```
+
+**这里只要修改任务1的优先级，改为0，让空闲任务可以运行，第二段代码就可以运行**
+
+**韦东山老师在这里调用了钩子函数配置空闲任务，我在这里的理解是，这里可以配置空闲任务，让空闲任务做其他事情，空闲任务应该是默认会清理空间的**
+
+---
+
+##### 钩子函数
+
+空闲任务的钩子函数配置如下：
+
+函数说明：
+
+```C
+#if ( configUSE_IDLE_HOOK == 1 )
+{
+    extern void vApplicationIdleHook( void );
+    /* Call the user defined function from within the idle task.  This
+     * allows the application designer to add background functionality
+     * without the overhead of a separate task.
+     * NOTE: vApplicationIdleHook() MUST NOT, UNDER ANY CIRCUMSTANCES,
+     * CALL A FUNCTION THAT MIGHT BLOCK. */
+    vApplicationIdleHook();
+}
+#endif /* configUSE_IDLE_HOOK */
+```
+
+修改宏
+
+```C
+#define configUSE_IDLE_HOOK			1
+```
+自己实现函数
+```C
+void vApplicationIdleHook()
+{
+}
+```
+
+
+
+
+
+### END

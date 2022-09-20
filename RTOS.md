@@ -1,4 +1,4 @@
-### 一. 堆和栈
+### 一、堆和栈
 
 ##### 1. 堆(heap)
 
@@ -10,7 +10,7 @@
 
 ---
 
-### 二.从目录文件了解源码结构
+### 二、从目录文件了解源码结构
 
 从[FreeRTOS](https://www.freertos.org/)官网下载的文件解压缩之后，得到三个目录文件
 
@@ -44,7 +44,7 @@ RTOS的核心，打开之后得到以下文件夹
 
 ---
 
-### 三.创建任务
+### 三、创建任务
 
 ##### 动态创建
 
@@ -314,7 +314,7 @@ xTaskCreate(TaskCommonFun,"Task2",100,(void*)9,1,NULL);
 
 ---
 
-### 四.任务管理
+### 四、任务管理
 
 #### 1.任务状态
 
@@ -456,6 +456,8 @@ void TaskFun3(void* arg)
 
 这个实验很好的体现了任务的四种状态
 
+---
+
 #### 2.vTaskDelay和vTaskDelayUntil
 
 + vTaskDelay
@@ -471,6 +473,8 @@ void TaskFun3(void* arg)
 一开始传入t1，延迟固定时间然后运行到t3时会将t3替代t1，再次延迟固定时间后传入t5替代t3，依次类推。
 
 **vTaskDelay和vTaskDelayUnitl的区别在于后者B包含A**
+
+---
 
 #### 3.空闲任务及其钩子函数
 
@@ -596,6 +600,232 @@ void vApplicationIdleHook()
 {
 }
 ```
+
+---
+
+#### 4.任务调度算法
+
+所谓调度算法，就是怎么确定哪个就绪态的任务可以切换为运行状态。
+
+这里的任务调度，指的是，是否允许任务抢占（就是高优先级能否先执行），是否允许时间片轮转（就是同优先级的任务能否交替运行），还有就是空闲任务是否要让步。
+
+```C
+#define configUSE_PREEMPTION		1//是否允许抢占
+
+#ifndef configUSE_TIME_SLICING		//是否允许时间片轮转
+    #define configUSE_TIME_SLICING    1
+#endif
+
+#define configIDLE_SHOULD_YIELD		1//空闲任务是否让步
+```
+
+这三个配置中
+
++ 是否允许抢占，如果不允许，即使给予高优先级，所有任务优先级均相等
++ 是否允许时间片轮转，在抢占允许的条件下，如果不允许，其中一个任务会一直执行，直到该任务执行结束或被暂停
++ 空闲任务是否让步，如果让步，空闲任务会让出cpu资源，自己占用很少
+
+---
+
+### 五、同步互斥与通信
+
++ 同步：个人理解就是同优先级交替执行
++ 互斥：个人理解就是某个任务占用资源执行完才能到另一个任务占用资源
++ 通信：就是全局变量，每个任务函数都可以访问
+
+能实现同步、互斥的内核方法：
+
++ 队列（queue）
++ 事件组（event group）
++ 信号量（semaphore）
++ 任务通知（task notification）
++ 互斥量（mutex）
+
+![同步互斥的实现方法](imag/synchronous&mutex.png)
+
+---
+
+### 六、队列
+
+#### 队列的组成
+
+队列的创建函数，先从函数了解创建队列需要什么
+
+```C
+xQueueCreate( uxQueueLength, uxItemSize )
+```
+
++ uxQueueLength：队列的长度
++ uxItemSize：队列中每个单元的大小
+
+在查找队列的定义时，会找到队列的定义里有两个指针
+
+```C
+/* xQUEUE(QueueDefinition) */
+int8_t * pcHead;/*< Points to the beginning of the queue storage area. */
+int8_t * pcWriteTo;/*< Points to the free next place in the storage area. */
+```
+
+当写数据时
+![环形队列写数据](imag/circle_queue_write.png)
+
+当读数据时
+
+![环形队列读取数据](imag/circle_queue_read.png)
+
+如果队列已满，数据还没写完，会将这些数据放入xTasksWaitingToSend，读数据同理
+
+```C
+List_t xTasksWaitingToSend;/*< List of tasks that are blocked waiting to post onto this queue.  Stored in priority order. */
+List_t xTasksWaitingToReceive;/*< List of tasks that are blocked waiting to read from this queue.  Stored in priority order. */
+```
+
+---
+
+#### 实验
+
+##### 队列实现同步
+
+```C
+u16 test_val;
+QueueHandle_t TestQueueHandle;
+
+void TaskWriteQueue(void* arg)//任务1
+{
+	while(1)
+	{
+		test_val++;
+		if( test_val == 65535 )
+		{
+			test_val = 0;
+		}
+		xQueueSend( TestQueueHandle , &test_val , portMAX_DELAY );
+	}
+}
+
+void TaskReadQueue(void* arg)//任务2
+{
+	u16 temp=0;
+	while(1)
+	{
+		xQueueReceive( TestQueueHandle , &temp, portMAX_DELAY );
+		printf("%d\r\n",temp);
+	}
+}
+
+int main( void )
+{	
+#ifdef DEBUG
+  debug();
+#endif
+
+	prvSetupHardware();
+	
+	printf("hello my freeRTOS\r\n");
+
+    /*
+    创建队列，注意队列里每个单元的大小
+    特别注意任务里写入或读取队列时的数据类型大小和创建队列时的大小
+    */
+	TestQueueHandle = xQueueCreate(1,sizeof(u16));
+	if( TestQueueHandle == NULL )
+	{
+		printf("create queue error\r\n");
+	}
+	
+	xTaskCreate(TaskWriteQueue,"WriteQueue",100,NULL,1,NULL);
+	xTaskCreate(TaskReadQueue,"ReadQueue",100,NULL,1,NULL);
+	/* Start the scheduler. */
+	vTaskStartScheduler();
+	return 0;
+}
+```
+
+在这个程序，任务1将变量自增，并写入队列，任务2从队列中读取数据，并打印出来
+
+![同步实验流程图](imag/synch_eg.png)
+
+---
+
+##### 队列实现互斥
+
+```C
+QueueHandle_t TestQueueHandle;
+
+//创建一个串口锁
+void TaskUartLock(void)
+{
+	u8 flag=0;
+	TestQueueHandle = xQueueCreate(1,sizeof(u8));
+	if( TestQueueHandle == NULL )
+	{
+		printf("create queue error\r\n");
+	}
+	xQueueSend( TestQueueHandle , &flag , portMAX_DELAY );
+}
+
+/*
+	读取锁，也就是读取队列里的数据，并不是里面的数据是标志位
+	而是“读取数据”的这个行为就是标志位
+*/
+void GetUartLock(void)
+{
+	u8 flag=0;
+	xQueueReceive( TestQueueHandle , &flag, portMAX_DELAY );
+}
+
+/*
+	写入锁，与GetUartLock()同理，“写入数据”表示当前任务结束了
+*/
+void PutUartLock(void)
+{
+	u8 flag=0;
+	xQueueSend( TestQueueHandle , &flag, portMAX_DELAY );
+}
+
+
+void TaskGenericFun(void* arg)
+{
+	while(1)
+	{
+		GetUartLock();//任务开始
+		printf("%s\r\n",(char*)arg);
+		PutUartLock();//任务结束
+		taskYIELD();
+        /*
+        任务让步，否则第一个执行的任务会一直在while循环，其他任务得不到执行
+        这里也可以用vTaskDelay，但是这个会阻塞任务，占用资源，用taskYIELD()更合理
+        */
+	}
+}
+
+int main( void )
+{
+	
+#ifdef DEBUG
+  debug();
+#endif
+
+	prvSetupHardware();
+	
+	printf("hello my freeRTOS\r\n");
+
+	TaskUartLock();
+	
+	xTaskCreate(TaskGenericFun,"Task1",100,(void*)"Task1",1,NULL);
+	xTaskCreate(TaskGenericFun,"Task2",100,(void*)"Task2",1,NULL);
+	/* Start the scheduler. */
+	vTaskStartScheduler();
+
+	/* Will only get here if there was not enough heap space to create the
+	idle task. */
+	return 0;
+}
+```
+
+这是怎么体现互斥呢？一些个人理解
+
+一开始在12行就往队列里写入了数据，这个很重要，所谓GetUartLock()就是从队列读取数据，经测试，只有读到数据才会往下走，否则会进入卡在某一步，具体原理还不知道，而且呢，如果读不到数据，该任务就不会执行，然后让步给其他任务，又经测试，如果有一个任务比代码块里的任务优先级低，并且一开始队列里没有数据，则程序就一直在这个低优先级的任务里
 
 
 

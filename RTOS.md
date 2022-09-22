@@ -827,6 +827,97 @@ int main( void )
 
 一开始在12行就往队列里写入了数据，这个很重要，所谓GetUartLock()就是从队列读取数据，经测试，只有读到数据才会往下走，否则会进入卡在某一步，具体原理还不知道，而且呢，如果读不到数据，该任务就不会执行，然后让步给其他任务，又经测试，如果有一个任务比代码块里的任务优先级低，并且一开始队列里没有数据，则程序就一直在这个低优先级的任务里
 
+---
+
+#### 队列集
+
+##### 队列集的概念
+
++ 从抽象一点的概念来讲，队列集就是把多个队列放在一个新的队列里
++ 队列集也是个队列
++ 队列集的长度是放进队列集的所有队列长度总和，可查文档
+
+##### 队列集的作用
+
+队列集可以不用通过轮询每个队列是否有数据的方式来获取每个队列里的数据（个人还不理解有什么用），官方说明了队列集的效率比较低不建议使用
+
+##### API
+
+```c
+xQueueCreateSet()//创建队列集
+xQueueAddToSet()//把队列添加进队列集
+xQueueSelectFromSet()//从队列集获取数据
+```
+
+详细代码看project/10-RTOS_Queue_Set
+
+---
+
+#### 特殊队列：mailbox
+
+mailbox是长度为1的队列
+
+任务给mailbox写数据后，任务都可以从mailbox读到数据，但并不会让mailbox数据丢失，像上面的那些队列，读数据就是提取出来，mailbox就是特殊的队列，数据可以覆盖，并且是特定的唯一的任务，其他任务不可以往这写数据。
+
+在不同的实时操作系统里这种特殊的队列的叫法不一样，在FreeRTOS叫mailbox，邮箱
+
+API函数
+
+```C
+xQueueOverwrite//写数据，覆盖当前数据
+xQueuePeek//从mailbox‘看’数据，并非‘拿’数据  peek
+```
+
+测试结果如下：
+
+![mailbox现象](imag/queue_mailbox.png)
+
+可以看到，当mailbox为空时，读取不到数据，当mailbox有数据了，读取数据并不会造成mailbox数据丢失。
+
+```c
+QueueHandle_t MailBoxHandle = NULL;
+
+void vTaskSendMailBox(void* arg)
+{
+	u8 send_mail=0;
+	BaseType_t res=0;
+	while(1)
+	{
+		vTaskDelay(10);
+		res = xQueueOverwrite( MailBoxHandle,&send_mail );
+		if( res != pdPASS )
+		{
+			printf("write mailbox err\r\n");
+		}
+		send_mail++;
+		if( send_mail == 255 )
+		{
+			send_mail = 0;
+		}
+	}
+}
+
+void vTaskPeekMailBox1(void* arg)
+{
+	u8 mail=0;
+	BaseType_t res=0;
+	while(1)
+	{
+		res = xQueuePeek( MailBoxHandle,&mail ,0);
+		if( res == pdPASS )
+		{
+			printf("peek1 mailbox data:%d\r\n",mail);
+		}
+		else
+		{
+			printf("peek1 mailbox err,no mail\r\n");
+		}
+	}
+}
+```
+
+
+
 
 
 
